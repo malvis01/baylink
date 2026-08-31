@@ -26,40 +26,57 @@ function App() {
 
   const showMessage = (type, text) => {
     setMessage({ type, text });
-    window.setTimeout(() => setMessage({ type: "", text: "" }), 4500);
+
+    window.setTimeout(() => {
+      setMessage({ type: "", text: "" });
+    }, 4500);
   };
 
   useEffect(() => {
     let mounted = true;
 
     async function initialize() {
-      const {
-        data: { session: currentSession },
-      } = await supabase.auth.getSession();
+      try {
+        const {
+          data: { session: currentSession },
+        } = await supabase.auth.getSession();
 
-      if (!mounted) return;
+        if (!mounted) return;
 
-      setSession(currentSession);
+        setSession(currentSession);
 
-      if (currentSession?.user) {
-        await loadProfile(currentSession.user.id);
+        if (currentSession?.user) {
+          await loadProfile(currentSession.user.id);
+        }
+
+        await loadMarketplace();
+      } catch (error) {
+        console.error("Initialization error:", error);
+
+        if (mounted) {
+          showMessage(
+            "error",
+            error?.message || "Unable to initialize BayLINK."
+          );
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
       }
-
-      await loadMarketplace();
-      setLoading(false);
     }
 
     initialize();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, currentSession) => {
+    } = supabase.auth.onAuthStateChange((_event, currentSession) => {
       if (!mounted) return;
 
       setSession(currentSession);
 
       if (currentSession?.user) {
-        await loadProfile(currentSession.user.id);
+        loadProfile(currentSession.user.id);
       } else {
         setProfile(null);
       }
@@ -72,6 +89,8 @@ function App() {
   }, []);
 
   async function loadProfile(userId) {
+    if (!userId) return null;
+
     const { data, error } = await supabase
       .from("profiles")
       .select("*")
@@ -80,10 +99,11 @@ function App() {
 
     if (error) {
       console.error("Profile load error:", error);
-      return;
+      return null;
     }
 
-    setProfile(data);
+    setProfile(data || null);
+    return data || null;
   }
 
   async function loadMarketplace() {
@@ -130,6 +150,7 @@ function App() {
     setSession(null);
     setProfile(null);
     setPage("home");
+    setModal(null);
     showMessage("success", "You have been logged out.");
   }
 
@@ -147,23 +168,31 @@ function App() {
     const term = search.trim().toLowerCase();
 
     return businesses.filter((business) => {
+      const searchable = [
+        business.business_name,
+        business.description,
+        business.category,
+        business.location,
+        business.address,
+      ];
+
       const matchesSearch =
         !term ||
-        [
-          business.business_name,
-          business.description,
-          business.category,
-          business.location,
-        ]
+        searchable
           .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(term));
+          .some((value) =>
+            String(value).toLowerCase().includes(term)
+          );
 
-      const matchesCategory =
-        category === "All" ||
-        category === "Businesses" ||
-        String(business.category || "")
+      let matchesCategory = true;
+
+      if (category === "Businesses") {
+        matchesCategory = true;
+      } else if (category !== "All") {
+        matchesCategory = String(business.category || "")
           .toLowerCase()
-          .includes(category.toLowerCase().replace("s", ""));
+          .includes(category.toLowerCase().replace(/s$/, ""));
+      }
 
       return matchesSearch && matchesCategory;
     });
@@ -173,22 +202,29 @@ function App() {
     const term = search.trim().toLowerCase();
 
     return products.filter((product) => {
+      const searchable = [
+        product.name,
+        product.description,
+        product.category,
+      ];
+
       const matchesSearch =
         !term ||
-        [
-          product.name,
-          product.description,
-          product.category,
-        ]
+        searchable
           .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(term));
+          .some((value) =>
+            String(value).toLowerCase().includes(term)
+          );
 
-      const matchesCategory =
-        category === "All" ||
-        category === "Businesses" ||
-        String(product.category || "")
+      let matchesCategory = true;
+
+      if (category === "Businesses") {
+        matchesCategory = true;
+      } else if (category !== "All") {
+        matchesCategory = String(product.category || "")
           .toLowerCase()
-          .includes(category.toLowerCase().replace("s", ""));
+          .includes(category.toLowerCase().replace(/s$/, ""));
+      }
 
       return matchesSearch && matchesCategory;
     });
@@ -197,7 +233,11 @@ function App() {
   function goToDiscover(selectedCategory = "All") {
     setCategory(selectedCategory);
     setPage("discover");
-    window.scrollTo({ top: 0, behavior: "smooth" });
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
   }
 
   function handlePostNeed() {
@@ -218,7 +258,10 @@ function App() {
           className="brand"
           onClick={() => {
             setPage("home");
-            window.scrollTo({ top: 0, behavior: "smooth" });
+            window.scrollTo({
+              top: 0,
+              behavior: "smooth",
+            });
           }}
         >
           <span className="brand-mark">B</span>
@@ -228,17 +271,36 @@ function App() {
         </button>
 
         <nav className="nav">
-          <button onClick={() => goToDiscover("All")}>Discover</button>
-          <button onClick={() => setPage("opportunities")}>
+          <button onClick={() => goToDiscover("All")}>
+            Discover
+          </button>
+
+          <button
+            onClick={() => {
+              setPage("opportunities");
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+          >
             Opportunities
           </button>
-          <button onClick={() => setPage("how")}>How it works</button>
+
+          <button
+            onClick={() => {
+              setPage("how");
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+          >
+            How it works
+          </button>
 
           {session ? (
             <>
               <button
                 className="login"
-                onClick={() => setPage("account")}
+                onClick={() => {
+                  setPage("account");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
               >
                 {profile?.full_name || "Account"}
               </button>
@@ -416,7 +478,10 @@ function App() {
 
               <button
                 className="light-button"
-                onClick={() => setPage("opportunities")}
+                onClick={() => {
+                  setPage("opportunities");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
               >
                 Explore opportunities →
               </button>
@@ -475,7 +540,9 @@ function App() {
                     : setModal("signup")
                 }
               >
-                {session ? "Open my account →" : "Create your profile →"}
+                {session
+                  ? "Open my account →"
+                  : "Create your profile →"}
               </button>
             </section>
           </>
@@ -490,7 +557,6 @@ function App() {
             businesses={filteredBusinesses}
             products={filteredProducts}
             loading={loading}
-            onLogin={() => setModal("login")}
             onRefresh={loadMarketplace}
           />
         )}
@@ -517,14 +583,16 @@ function App() {
             profile={profile}
             businesses={businesses}
             products={products}
-            onProfileUpdated={(nextProfile) => setProfile(nextProfile)}
+            onProfileUpdated={(nextProfile) =>
+              setProfile(nextProfile)
+            }
             onBusinessCreated={async () => {
               await loadMarketplace();
               showMessage("success", "Business profile created.");
             }}
             onProductCreated={async () => {
               await loadMarketplace();
-              showMessage("success", "Product added successfully.");
+              showMessage("success", "Product submitted.");
             }}
             onLogout={signOut}
           />
@@ -536,7 +604,10 @@ function App() {
           className="brand"
           onClick={() => {
             setPage("home");
-            window.scrollTo({ top: 0, behavior: "smooth" });
+            window.scrollTo({
+              top: 0,
+              behavior: "smooth",
+            });
           }}
         >
           <span className="brand-mark">B</span>
@@ -558,6 +629,7 @@ function App() {
           onClose={() => setModal(null)}
           onSuccess={async (user) => {
             await loadProfile(user.id);
+            await loadMarketplace();
             setModal(null);
             setPage("account");
             showMessage("success", "Welcome back to BayLINK.");
@@ -582,9 +654,13 @@ function App() {
             }
 
             await loadProfile(user.id);
+            await loadMarketplace();
             setModal(null);
             setPage("account");
-            showMessage("success", "Your BayLINK account is ready.");
+            showMessage(
+              "success",
+              "Your BayLINK account is ready."
+            );
           }}
           onSwitch={() => setModal("login")}
           onError={(text) => showMessage("error", text)}
@@ -643,6 +719,7 @@ function DiscoverPage({
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search businesses, products, services..."
         />
+
         <button onClick={onRefresh}>Refresh</button>
       </div>
 
@@ -723,12 +800,17 @@ function BusinessCard({ business }) {
       <div className="result-content">
         <div className="result-title">
           <h3>{business.business_name}</h3>
-          {business.verified && <span title="Verified">✓</span>}
+
+          {business.verified && (
+            <span title="Verified">✓</span>
+          )}
         </div>
 
         <small>
           {business.category || "Local business"}
-          {business.location ? ` • ${business.location}` : ""}
+          {business.location
+            ? ` • ${business.location}`
+            : ""}
         </small>
 
         <p>
@@ -797,12 +879,18 @@ function ProductCard({ product }) {
   );
 }
 
-function OpportunitiesPage({ session, onPostNeed, onLogin }) {
+function OpportunitiesPage({
+  session,
+  onPostNeed,
+  onLogin,
+}) {
   return (
     <section className="app-page">
       <div className="page-heading">
         <span className="label">BAYLINK OPPORTUNITIES</span>
+
         <h1>Turn needs into connections.</h1>
+
         <p>
           Tell the network what you need and connect with businesses
           and professionals who can help.
@@ -812,7 +900,9 @@ function OpportunitiesPage({ session, onPostNeed, onLogin }) {
       <div className="opportunity-panel">
         <div>
           <span className="big-icon">📋</span>
+
           <h2>Post What I Need</h2>
+
           <p>
             Looking for a supplier, professional, product or service?
             Post your request and let the right people find you.
@@ -823,7 +913,9 @@ function OpportunitiesPage({ session, onPostNeed, onLogin }) {
           className="primary"
           onClick={session ? onPostNeed : onLogin}
         >
-          {session ? "Post a request →" : "Log in to post →"}
+          {session
+            ? "Post a request →"
+            : "Log in to post →"}
         </button>
       </div>
 
@@ -831,25 +923,34 @@ function OpportunitiesPage({ session, onPostNeed, onLogin }) {
         <article>
           <span>💼</span>
           <h3>Jobs</h3>
-          <p>Build the foundation for local job opportunities.</p>
+          <p>
+            Build the foundation for local job opportunities.
+          </p>
         </article>
 
         <article>
           <span>📦</span>
           <h3>Procurement</h3>
-          <p>Help buyers discover capable local suppliers.</p>
+          <p>
+            Help buyers discover capable local suppliers.
+          </p>
         </article>
 
         <article>
           <span>🌱</span>
           <h3>Agriculture</h3>
-          <p>Connect farmers, buyers and agricultural businesses.</p>
+          <p>
+            Connect farmers, buyers and agricultural businesses.
+          </p>
         </article>
 
         <article>
           <span>🤝</span>
           <h3>Business connections</h3>
-          <p>Find people and businesses that can move your work forward.</p>
+          <p>
+            Find people and businesses that can move your work
+            forward.
+          </p>
         </article>
       </div>
     </section>
@@ -861,7 +962,9 @@ function HowPage({ onJoin }) {
     <section className="app-page">
       <div className="page-heading">
         <span className="label">HOW BAYLINK WORKS</span>
+
         <h1>Simple. Local. Useful.</h1>
+
         <p>
           BayLINK is designed to make local business discovery and
           opportunity connections easier.
@@ -925,19 +1028,38 @@ function AccountPage({
   onLogout,
 }) {
   const [activeTab, setActiveTab] = useState("profile");
-  const [fullName, setFullName] = useState(profile?.full_name || "");
-  const [phone, setPhone] = useState(profile?.phone || "");
+
+  const [fullName, setFullName] = useState(
+    profile?.full_name || ""
+  );
+
+  const [phone, setPhone] = useState(
+    profile?.phone || ""
+  );
+
   const [saving, setSaving] = useState(false);
+
   const [businessName, setBusinessName] = useState("");
-  const [businessDescription, setBusinessDescription] = useState("");
-  const [businessCategory, setBusinessCategory] = useState("");
+  const [businessDescription, setBusinessDescription] =
+    useState("");
+  const [businessCategory, setBusinessCategory] =
+    useState("");
   const [businessPhone, setBusinessPhone] = useState("");
-  const [businessLocation, setBusinessLocation] = useState("");
+  const [businessWhatsapp, setBusinessWhatsapp] =
+    useState("");
+  const [businessLocation, setBusinessLocation] =
+    useState("");
+
   const [productName, setProductName] = useState("");
-  const [productDescription, setProductDescription] = useState("");
+  const [productDescription, setProductDescription] =
+    useState("");
   const [productPrice, setProductPrice] = useState("");
-  const [productCategory, setProductCategory] = useState("");
+  const [productCategory, setProductCategory] =
+    useState("");
   const [productStock, setProductStock] = useState("1");
+  const [productImageUrl, setProductImageUrl] =
+    useState("");
+
   const [localMessage, setLocalMessage] = useState("");
 
   useEffect(() => {
@@ -956,7 +1078,8 @@ function AccountPage({
   }
 
   const myBusinesses = businesses.filter(
-    (business) => business.owner_id === session.user.id
+    (business) =>
+      business.owner_id === session.user.id
   );
 
   const myBusinessIds = new Set(
@@ -969,6 +1092,7 @@ function AccountPage({
 
   async function saveProfile(event) {
     event.preventDefault();
+
     setSaving(true);
     setLocalMessage("");
 
@@ -989,22 +1113,28 @@ function AccountPage({
     setSaving(false);
 
     if (error) {
+      console.error(error);
       setLocalMessage(error.message);
       return;
     }
 
     onProfileUpdated(data);
-    setLocalMessage("Profile saved successfully.");
+    setLocalMessage(
+      "Profile saved successfully."
+    );
   }
 
   async function createBusiness(event) {
     event.preventDefault();
+
     setSaving(true);
     setLocalMessage("");
 
     if (!businessName.trim()) {
       setSaving(false);
-      setLocalMessage("Business name is required.");
+      setLocalMessage(
+        "Business name is required."
+      );
       return;
     }
 
@@ -1013,10 +1143,18 @@ function AccountPage({
       .insert({
         owner_id: session.user.id,
         business_name: businessName.trim(),
-        description: businessDescription.trim() || null,
-        category: businessCategory.trim() || null,
-        phone: businessPhone.trim() || phone.trim() || null,
-        location: businessLocation.trim() || null,
+        description:
+          businessDescription.trim() || null,
+        category:
+          businessCategory.trim() || null,
+        phone:
+          businessPhone.trim() ||
+          phone.trim() ||
+          null,
+        whatsapp:
+          businessWhatsapp.trim() || null,
+        location:
+          businessLocation.trim() || null,
         status: "pending",
         verified: false,
       })
@@ -1026,6 +1164,7 @@ function AccountPage({
     setSaving(false);
 
     if (error) {
+      console.error(error);
       setLocalMessage(error.message);
       return;
     }
@@ -1034,14 +1173,19 @@ function AccountPage({
     setBusinessDescription("");
     setBusinessCategory("");
     setBusinessPhone("");
+    setBusinessWhatsapp("");
     setBusinessLocation("");
 
-    setLocalMessage("Business profile created.");
+    setLocalMessage(
+      "Business profile created and submitted for review."
+    );
+
     await onBusinessCreated(data);
   }
 
   async function createProduct(event) {
     event.preventDefault();
+
     setSaving(true);
     setLocalMessage("");
 
@@ -1055,7 +1199,28 @@ function AccountPage({
 
     if (!productName.trim()) {
       setSaving(false);
-      setLocalMessage("Product name is required.");
+      setLocalMessage(
+        "Product/service name is required."
+      );
+      return;
+    }
+
+    const price = Number(productPrice || 0);
+    const stock = Number(productStock || 0);
+
+    if (Number.isNaN(price) || price < 0) {
+      setSaving(false);
+      setLocalMessage(
+        "Please enter a valid price."
+      );
+      return;
+    }
+
+    if (Number.isNaN(stock) || stock < 0) {
+      setSaving(false);
+      setLocalMessage(
+        "Please enter a valid stock quantity."
+      );
       return;
     }
 
@@ -1064,10 +1229,14 @@ function AccountPage({
       .insert({
         business_id: myBusinesses[0].id,
         name: productName.trim(),
-        description: productDescription.trim() || null,
-        price: Number(productPrice || 0),
-        category: productCategory.trim() || null,
-        stock: Number(productStock || 0),
+        description:
+          productDescription.trim() || null,
+        price,
+        category:
+          productCategory.trim() || null,
+        stock,
+        image_url:
+          productImageUrl.trim() || null,
         status: "active",
         approved: false,
       })
@@ -1077,6 +1246,7 @@ function AccountPage({
     setSaving(false);
 
     if (error) {
+      console.error(error);
       setLocalMessage(error.message);
       return;
     }
@@ -1086,6 +1256,7 @@ function AccountPage({
     setProductPrice("");
     setProductCategory("");
     setProductStock("1");
+    setProductImageUrl("");
 
     setLocalMessage(
       "Product submitted. It will appear publicly after approval."
@@ -1099,32 +1270,51 @@ function AccountPage({
       <div className="account-header">
         <div>
           <span className="label">MY BAYLINK</span>
-          <h1>Welcome, {profile?.full_name || "Member"}.</h1>
+
+          <h1>
+            Welcome, {profile?.full_name || "Member"}.
+          </h1>
+
           <p>{session.user.email}</p>
         </div>
 
-        <button className="secondary" onClick={onLogout}>
+        <button
+          className="secondary"
+          onClick={onLogout}
+        >
           Log out
         </button>
       </div>
 
       <div className="account-tabs">
         <button
-          className={activeTab === "profile" ? "active" : ""}
+          className={
+            activeTab === "profile"
+              ? "active"
+              : ""
+          }
           onClick={() => setActiveTab("profile")}
         >
           Profile
         </button>
 
         <button
-          className={activeTab === "business" ? "active" : ""}
+          className={
+            activeTab === "business"
+              ? "active"
+              : ""
+          }
           onClick={() => setActiveTab("business")}
         >
           My Business
         </button>
 
         <button
-          className={activeTab === "product" ? "active" : ""}
+          className={
+            activeTab === "product"
+              ? "active"
+              : ""
+          }
           onClick={() => setActiveTab("product")}
         >
           Add Product
@@ -1132,18 +1322,25 @@ function AccountPage({
       </div>
 
       {localMessage && (
-        <div className="inline-message">{localMessage}</div>
+        <div className="inline-message">
+          {localMessage}
+        </div>
       )}
 
       {activeTab === "profile" && (
-        <form className="form-card" onSubmit={saveProfile}>
+        <form
+          className="form-card"
+          onSubmit={saveProfile}
+        >
           <h2>Your profile</h2>
 
           <label>
             Full name
             <input
               value={fullName}
-              onChange={(event) => setFullName(event.target.value)}
+              onChange={(event) =>
+                setFullName(event.target.value)
+              }
               placeholder="Your full name"
             />
           </label>
@@ -1152,18 +1349,28 @@ function AccountPage({
             Phone number
             <input
               value={phone}
-              onChange={(event) => setPhone(event.target.value)}
+              onChange={(event) =>
+                setPhone(event.target.value)
+              }
               placeholder="080..."
             />
           </label>
 
           <label>
             Email
-            <input value={session.user.email || ""} disabled />
+            <input
+              value={session.user.email || ""}
+              disabled
+            />
           </label>
 
-          <button className="primary" disabled={saving}>
-            {saving ? "Saving..." : "Save profile"}
+          <button
+            className="primary"
+            disabled={saving}
+          >
+            {saving
+              ? "Saving..."
+              : "Save profile"}
           </button>
         </form>
       )}
@@ -1175,32 +1382,48 @@ function AccountPage({
               <h2>Your businesses</h2>
 
               {myBusinesses.map((business) => (
-                <div className="owned-item" key={business.id}>
+                <div
+                  className="owned-item"
+                  key={business.id}
+                >
                   <div>
-                    <strong>{business.business_name}</strong>
+                    <strong>
+                      {business.business_name}
+                    </strong>
+
                     <small>
-                      {business.category || "Business"} •{" "}
-                      {business.status}
+                      {business.category ||
+                        "Business"}{" "}
+                      • {business.status}
                     </small>
                   </div>
 
                   <span>
-                    {business.verified ? "Verified" : "Pending"}
+                    {business.verified
+                      ? "Verified"
+                      : "Pending"}
                   </span>
                 </div>
               ))}
             </div>
           )}
 
-          <form className="form-card" onSubmit={createBusiness}>
-            <h2>Create a business profile</h2>
+          <form
+            className="form-card"
+            onSubmit={createBusiness}
+          >
+            <h2>
+              Create a business profile
+            </h2>
 
             <label>
               Business name *
               <input
                 value={businessName}
                 onChange={(event) =>
-                  setBusinessName(event.target.value)
+                  setBusinessName(
+                    event.target.value
+                  )
                 }
                 placeholder="Your business name"
                 required
@@ -1212,7 +1435,9 @@ function AccountPage({
               <textarea
                 value={businessDescription}
                 onChange={(event) =>
-                  setBusinessDescription(event.target.value)
+                  setBusinessDescription(
+                    event.target.value
+                  )
                 }
                 placeholder="What does your business do?"
               />
@@ -1223,7 +1448,9 @@ function AccountPage({
               <input
                 value={businessCategory}
                 onChange={(event) =>
-                  setBusinessCategory(event.target.value)
+                  setBusinessCategory(
+                    event.target.value
+                  )
                 }
                 placeholder="e.g. Food, Fashion, Construction"
               />
@@ -1234,9 +1461,24 @@ function AccountPage({
               <input
                 value={businessPhone}
                 onChange={(event) =>
-                  setBusinessPhone(event.target.value)
+                  setBusinessPhone(
+                    event.target.value
+                  )
                 }
                 placeholder="080..."
+              />
+            </label>
+
+            <label>
+              WhatsApp number
+              <input
+                value={businessWhatsapp}
+                onChange={(event) =>
+                  setBusinessWhatsapp(
+                    event.target.value
+                  )
+                }
+                placeholder="2348012345678"
               />
             </label>
 
@@ -1245,22 +1487,34 @@ function AccountPage({
               <input
                 value={businessLocation}
                 onChange={(event) =>
-                  setBusinessLocation(event.target.value)
+                  setBusinessLocation(
+                    event.target.value
+                  )
                 }
                 placeholder="Yenagoa, Sagbama, etc."
               />
             </label>
 
-            <button className="primary" disabled={saving}>
-              {saving ? "Creating..." : "Create business"}
+            <button
+              className="primary"
+              disabled={saving}
+            >
+              {saving
+                ? "Creating..."
+                : "Create business"}
             </button>
           </form>
         </div>
       )}
 
       {activeTab === "product" && (
-        <form className="form-card" onSubmit={createProduct}>
-          <h2>Add a product or service</h2>
+        <form
+          className="form-card"
+          onSubmit={createProduct}
+        >
+          <h2>
+            Add a product or service
+          </h2>
 
           {myBusinesses.length === 0 && (
             <div className="inline-message">
@@ -1273,7 +1527,9 @@ function AccountPage({
             <input
               value={productName}
               onChange={(event) =>
-                setProductName(event.target.value)
+                setProductName(
+                  event.target.value
+                )
               }
               placeholder="e.g. Catering service"
               required
@@ -1285,7 +1541,9 @@ function AccountPage({
             <textarea
               value={productDescription}
               onChange={(event) =>
-                setProductDescription(event.target.value)
+                setProductDescription(
+                  event.target.value
+                )
               }
               placeholder="Describe what you offer"
             />
@@ -1296,9 +1554,12 @@ function AccountPage({
             <input
               type="number"
               min="0"
+              step="0.01"
               value={productPrice}
               onChange={(event) =>
-                setProductPrice(event.target.value)
+                setProductPrice(
+                  event.target.value
+                )
               }
               placeholder="0"
             />
@@ -1309,7 +1570,9 @@ function AccountPage({
             <input
               value={productCategory}
               onChange={(event) =>
-                setProductCategory(event.target.value)
+                setProductCategory(
+                  event.target.value
+                )
               }
               placeholder="Category"
             />
@@ -1322,25 +1585,560 @@ function AccountPage({
               min="0"
               value={productStock}
               onChange={(event) =>
-                setProductStock(event.target.value)
+                setProductStock(
+                  event.target.value
+                )
               }
+            />
+          </label>
+
+          <label>
+            Product image URL
+            <input
+              value={productImageUrl}
+              onChange={(event) =>
+                setProductImageUrl(
+                  event.target.value
+                )
+              }
+              placeholder="https://..."
             />
           </label>
 
           <button
             className="primary"
-            disabled={saving || myBusinesses.length === 0}
+            disabled={
+              saving ||
+              myBusinesses.length === 0
+            }
           >
-            {saving ? "Submitting..." : "Add product"}
+            {saving
+              ? "Submitting..."
+              : "Add product"}
           </button>
 
           {myProducts.length > 0 && (
             <div className="owned-list">
-              <h3>Your submitted products</h3>
+              <h3>
+                Your submitted products
+              </h3>
 
               {myProducts.map((product) => (
-                <div className="owned-item" key={product.id}>
+                <div
+                  className="owned-item"
+                  key={product.id}
+                >
                   <div>
-                    <strong>{product.name}</strong>
+                    <strong>
+                      {product.name}
+                    </strong>
+
                     <small>
                       ₦
+                      {Number(
+                        product.price || 0
+                      ).toLocaleString()}{" "}
+                      •{" "}
+                      {product.approved
+                        ? "Approved"
+                        : "Pending approval"}
+                    </small>
+                  </div>
+
+                  <span>
+                    {product.approved
+                      ? "Live"
+                      : "Pending"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </form>
+      )}
+    </section>
+  );
+}
+
+function AuthModal({
+  mode,
+  onClose,
+  onSuccess,
+  onSwitch,
+  onError,
+}) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const isSignup = mode === "signup";
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+
+    setLoading(true);
+
+    try {
+      const cleanEmail = email.trim().toLowerCase();
+
+      if (!cleanEmail) {
+        throw new Error("Email address is required.");
+      }
+
+      if (!password || password.length < 6) {
+        throw new Error(
+          "Password must contain at least 6 characters."
+        );
+      }
+
+      if (isSignup) {
+        if (!fullName.trim()) {
+          throw new Error(
+            "Please enter your full name."
+          );
+        }
+
+        const { data, error } =
+          await supabase.auth.signUp({
+            email: cleanEmail,
+            password,
+            options: {
+              data: {
+                full_name: fullName.trim(),
+                phone: phone.trim() || null,
+              },
+            },
+          });
+
+        if (error) {
+          throw error;
+        }
+
+        if (!data.user) {
+          throw new Error(
+            "The account could not be created."
+          );
+        }
+
+        if (data.session) {
+          await supabase
+            .from("profiles")
+            .upsert(
+              {
+                id: data.user.id,
+                email: cleanEmail,
+                full_name:
+                  fullName.trim() || null,
+                phone:
+                  phone.trim() || null,
+                updated_at:
+                  new Date().toISOString(),
+              },
+              {
+                onConflict: "id",
+              }
+            );
+        }
+
+        onSuccess(
+          data.user,
+          !data.session
+        );
+
+        return;
+      }
+
+      const { data, error } =
+        await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      if (!data.user) {
+        throw new Error(
+          "Login was not completed."
+        );
+      }
+
+      onSuccess(data.user, false);
+    } catch (error) {
+      console.error("Authentication error:", error);
+
+      onError(
+        error?.message ||
+          "Something went wrong. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleForgotPassword() {
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail) {
+      onError(
+        "Enter your email address first."
+      );
+      return;
+    }
+
+    setLoading(true);
+
+    const { error } =
+      await supabase.auth.resetPasswordForEmail(
+        cleanEmail,
+        {
+          redirectTo: window.location.origin,
+        }
+      );
+
+    setLoading(false);
+
+    if (error) {
+      onError(error.message);
+      return;
+    }
+
+    onError(
+      "Password reset instructions have been sent to your email."
+    );
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal-card">
+        <button
+          className="modal-close"
+          onClick={onClose}
+          aria-label="Close"
+        >
+          ×
+        </button>
+
+        <span className="label">
+          {isSignup
+            ? "JOIN BAYLINK"
+            : "WELCOME BACK"}
+        </span>
+
+        <h2>
+          {isSignup
+            ? "Create your BayLINK account"
+            : "Log in to BayLINK"}
+        </h2>
+
+        <p>
+          {isSignup
+            ? "Create your member profile and start connecting."
+            : "Access your BayLINK account."}
+        </p>
+
+        <form
+          className="form-card modal-form"
+          onSubmit={handleSubmit}
+        >
+          {isSignup && (
+            <>
+              <label>
+                Full name *
+                <input
+                  value={fullName}
+                  onChange={(event) =>
+                    setFullName(
+                      event.target.value
+                    )
+                  }
+                  placeholder="Your full name"
+                  required
+                />
+              </label>
+
+              <label>
+                Phone number
+                <input
+                  value={phone}
+                  onChange={(event) =>
+                    setPhone(
+                      event.target.value
+                    )
+                  }
+                  placeholder="080..."
+                />
+              </label>
+            </>
+          )}
+
+          <label>
+            Email *
+            <input
+              type="email"
+              value={email}
+              onChange={(event) =>
+                setEmail(
+                  event.target.value
+                )
+              }
+              placeholder="you@example.com"
+              required
+            />
+          </label>
+
+          <label>
+            Password *
+            <input
+              type="password"
+              value={password}
+              onChange={(event) =>
+                setPassword(
+                  event.target.value
+                )
+              }
+              placeholder="At least 6 characters"
+              minLength="6"
+              required
+            />
+          </label>
+
+          <button
+            className="primary"
+            type="submit"
+            disabled={loading}
+          >
+            {loading
+              ? "Please wait..."
+              : isSignup
+              ? "Create account"
+              : "Log in"}
+          </button>
+        </form>
+
+        {!isSignup && (
+          <button
+            className="text-button"
+            onClick={handleForgotPassword}
+            disabled={loading}
+          >
+            Forgot password?
+          </button>
+        )}
+
+        <div className="modal-switch">
+          {isSignup
+            ? "Already have an account?"
+            : "Don't have an account?"}
+
+          <button onClick={onSwitch}>
+            {isSignup
+              ? " Log in"
+              : " Create one"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RequestModal({
+  onClose,
+  onSuccess,
+  onError,
+}) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] =
+    useState("");
+  const [category, setCategory] =
+    useState("General");
+  const [location, setLocation] =
+    useState("");
+  const [loading, setLoading] =
+    useState(false);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+
+    if (!title.trim()) {
+      onError("Please enter what you need.");
+      return;
+    }
+
+    if (!description.trim()) {
+      onError(
+        "Please describe what you need."
+      );
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError) {
+        throw userError;
+      }
+
+      if (!user) {
+        throw new Error(
+          "Please log in before posting a request."
+        );
+      }
+
+      const { error } = await supabase
+        .from("requests")
+        .insert({
+          user_id: user.id,
+          title: title.trim(),
+          description: description.trim(),
+          category,
+          location:
+            location.trim() || null,
+          status: "open",
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      onSuccess(
+        "Your request has been posted successfully."
+      );
+    } catch (error) {
+      console.error(
+        "Request creation error:",
+        error
+      );
+
+      onError(
+        error?.message ||
+          "Unable to post your request."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal-card">
+        <button
+          className="modal-close"
+          onClick={onClose}
+          aria-label="Close"
+        >
+          ×
+        </button>
+
+        <span className="label">
+          POST WHAT I NEED
+        </span>
+
+        <h2>Tell the BayLINK network what you need.</h2>
+
+        <p>
+          Businesses and professionals can discover your request
+          and connect with you.
+        </p>
+
+        <form
+          className="form-card modal-form"
+          onSubmit={handleSubmit}
+        >
+          <label>
+            What do you need? *
+            <input
+              value={title}
+              onChange={(event) =>
+                setTitle(event.target.value)
+              }
+              placeholder="e.g. Catering for an event"
+              required
+            />
+          </label>
+
+          <label>
+            Description *
+            <textarea
+              value={description}
+              onChange={(event) =>
+                setDescription(
+                  event.target.value
+                )
+              }
+              placeholder="Explain what you are looking for..."
+              required
+            />
+          </label>
+
+          <label>
+            Category
+            <select
+              value={category}
+              onChange={(event) =>
+                setCategory(
+                  event.target.value
+                )
+              }
+            >
+              <option value="General">
+                General
+              </option>
+              <option value="Businesses">
+                Businesses
+              </option>
+              <option value="Professionals">
+                Professionals
+              </option>
+              <option value="Jobs">
+                Jobs
+              </option>
+              <option value="Agriculture">
+                Agriculture
+              </option>
+              <option value="Procurement">
+                Procurement
+              </option>
+              <option value="Organizations">
+                Organizations
+              </option>
+            </select>
+          </label>
+
+          <label>
+            Location
+            <input
+              value={location}
+              onChange={(event) =>
+                setLocation(
+                  event.target.value
+                )
+              }
+              placeholder="e.g. Sagbama, Bayelsa"
+            />
+          </label>
+
+          <button
+            className="primary"
+            type="submit"
+            disabled={loading}
+          >
+            {loading
+              ? "Posting..."
+              : "Post request →"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+export default App;
