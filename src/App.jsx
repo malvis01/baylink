@@ -1,8 +1,5 @@
 function App() {
   return (
-
-function App() {
-  return (
     <div className="app">
       <header className="header">
         <a href="#home" className="brand">
