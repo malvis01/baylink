@@ -39,7 +39,12 @@ function App() {
       try {
         const {
           data: { session: currentSession },
+          error: sessionError,
         } = await supabase.auth.getSession();
+
+        if (sessionError) {
+          throw sessionError;
+        }
 
         if (!mounted) return;
 
@@ -70,13 +75,17 @@ function App() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, currentSession) => {
+    } = supabase.auth.onAuthStateChange(async (_event, currentSession) => {
       if (!mounted) return;
 
       setSession(currentSession);
 
       if (currentSession?.user) {
-        loadProfile(currentSession.user.id);
+        try {
+          await loadProfile(currentSession.user.id);
+        } catch (error) {
+          console.error("Auth profile refresh error:", error);
+        }
       } else {
         setProfile(null);
       }
@@ -91,14 +100,53 @@ function App() {
   async function loadProfile(userId) {
     if (!userId) return null;
 
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (error) {
+        console.error("Profile load error:", error);
+        return null;
+      }
+
+      setProfile(data || null);
+      return data || null;
+    } catch (error) {
+      console.error("Profile exception:", error);
+      return null;
+    }
+  }
+
+  async function ensureProfile(user) {
+    if (!user?.id) return null;
+
+    const existing = await loadProfile(user.id);
+
+    if (existing) {
+      return existing;
+    }
+
+    const metadata = user.user_metadata || {};
+
+    const payload = {
+      id: user.id,
+      email: user.email || null,
+      full_name: metadata.full_name || null,
+      phone: metadata.phone || null,
+      updated_at: new Date().toISOString(),
+    };
+
     const { data, error } = await supabase
       .from("profiles")
-      .select("*")
-      .eq("id", userId)
+      .upsert(payload, { onConflict: "id" })
+      .select()
       .maybeSingle();
 
     if (error) {
-      console.error("Profile load error:", error);
+      console.error("Profile creation error:", error);
       return null;
     }
 
@@ -107,35 +155,39 @@ function App() {
   }
 
   async function loadMarketplace() {
-    const [businessResult, productResult] = await Promise.all([
-      supabase
-        .from("businesses")
-        .select(
-          "id, owner_id, business_name, description, category, phone, whatsapp, address, logo_url, status, created_at, location, verified"
-        )
-        .order("created_at", { ascending: false })
-        .limit(100),
+    try {
+      const [businessResult, productResult] = await Promise.all([
+        supabase
+          .from("businesses")
+          .select(
+            "id, owner_id, business_name, description, category, phone, whatsapp, address, logo_url, status, created_at, location, verified"
+          )
+          .order("created_at", { ascending: false })
+          .limit(100),
 
-      supabase
-        .from("products")
-        .select(
-          "id, business_id, name, description, price, image_url, category, stock, status, created_at, approved"
-        )
-        .eq("approved", true)
-        .order("created_at", { ascending: false })
-        .limit(100),
-    ]);
+        supabase
+          .from("products")
+          .select(
+            "id, business_id, name, description, price, image_url, category, stock, status, created_at, approved"
+          )
+          .eq("approved", true)
+          .order("created_at", { ascending: false })
+          .limit(100),
+      ]);
 
-    if (businessResult.error) {
-      console.error("Businesses error:", businessResult.error);
-    } else {
-      setBusinesses(businessResult.data || []);
-    }
+      if (businessResult.error) {
+        console.error("Businesses error:", businessResult.error);
+      } else {
+        setBusinesses(businessResult.data || []);
+      }
 
-    if (productResult.error) {
-      console.error("Products error:", productResult.error);
-    } else {
-      setProducts(productResult.data || []);
+      if (productResult.error) {
+        console.error("Products error:", productResult.error);
+      } else {
+        setProducts(productResult.data || []);
+      }
+    } catch (error) {
+      console.error("Marketplace load error:", error);
     }
   }
 
@@ -627,12 +679,23 @@ function App() {
         <AuthModal
           mode="login"
           onClose={() => setModal(null)}
-          onSuccess={async (user) => {
-            await loadProfile(user.id);
+          onSuccess={async (user, currentSession) => {
+            const activeSession = currentSession || session;
+
+            if (activeSession) {
+              setSession(activeSession);
+            }
+
+            await ensureProfile(user);
             await loadMarketplace();
+
             setModal(null);
             setPage("account");
-            showMessage("success", "Welcome back to BayLINK.");
+
+            showMessage(
+              "success",
+              "Welcome back to BayLINK."
+            );
           }}
           onSwitch={() => setModal("signup")}
           onError={(text) => showMessage("error", text)}
@@ -643,20 +706,28 @@ function App() {
         <AuthModal
           mode="signup"
           onClose={() => setModal(null)}
-          onSuccess={async (user, requiresConfirmation) => {
+          onSuccess={async (user, requiresConfirmation, currentSession) => {
             if (requiresConfirmation) {
               setModal(null);
+
               showMessage(
                 "success",
                 "Account created. Check your email to confirm the account, then log in."
               );
+
               return;
             }
 
-            await loadProfile(user.id);
+            if (currentSession) {
+              setSession(currentSession);
+            }
+
+            await ensureProfile(user);
             await loadMarketplace();
+
             setModal(null);
             setPage("account");
+
             showMessage(
               "success",
               "Your BayLINK account is ready."
@@ -1678,6 +1749,8 @@ function AuthModal({
   async function handleSubmit(event) {
     event.preventDefault();
 
+    if (loading) return;
+
     setLoading(true);
 
     try {
@@ -1722,29 +1795,10 @@ function AuthModal({
           );
         }
 
-        if (data.session) {
-          await supabase
-            .from("profiles")
-            .upsert(
-              {
-                id: data.user.id,
-                email: cleanEmail,
-                full_name:
-                  fullName.trim() || null,
-                phone:
-                  phone.trim() || null,
-                updated_at:
-                  new Date().toISOString(),
-              },
-              {
-                onConflict: "id",
-              }
-            );
-        }
-
         onSuccess(
           data.user,
-          !data.session
+          !data.session,
+          data.session || null
         );
 
         return;
@@ -1760,26 +1814,56 @@ function AuthModal({
         throw error;
       }
 
-      if (!data.user) {
+      if (!data.user || !data.session) {
         throw new Error(
-          "Login was not completed."
+          "Login was not completed. Please try again."
         );
       }
 
-      onSuccess(data.user, false);
-    } catch (error) {
-      console.error("Authentication error:", error);
-
-      onError(
-        error?.message ||
-          "Something went wrong. Please try again."
+      /*
+       * IMPORTANT:
+       * Use the session returned directly by Supabase.
+       * Do not wait for the auth-state listener before
+       * allowing the user into the account.
+       */
+      onSuccess(
+        data.user,
+        false,
+        data.session
       );
+    } catch (error) {
+      console.error(
+        "Authentication error:",
+        error
+      );
+
+      let message =
+        error?.message ||
+        "Something went wrong. Please try again.";
+
+      if (
+        message.toLowerCase().includes("email not confirmed")
+      ) {
+        message =
+          "Your email has not been confirmed yet. Please check your email and confirm your BayLINK account before logging in.";
+      }
+
+      if (
+        message.toLowerCase().includes("invalid login credentials")
+      ) {
+        message =
+          "Incorrect email or password. Please check your details and try again.";
+      }
+
+      onError(message);
     } finally {
       setLoading(false);
     }
   }
 
   async function handleForgotPassword() {
+    if (loading) return;
+
     const cleanEmail = email.trim().toLowerCase();
 
     if (!cleanEmail) {
@@ -1791,24 +1875,30 @@ function AuthModal({
 
     setLoading(true);
 
-    const { error } =
-      await supabase.auth.resetPasswordForEmail(
-        cleanEmail,
-        {
-          redirectTo: window.location.origin,
-        }
+    try {
+      const { error } =
+        await supabase.auth.resetPasswordForEmail(
+          cleanEmail,
+          {
+            redirectTo: window.location.origin,
+          }
+        );
+
+      if (error) {
+        throw error;
+      }
+
+      onError(
+        "Password reset instructions have been sent to your email."
       );
-
-    setLoading(false);
-
-    if (error) {
-      onError(error.message);
-      return;
+    } catch (error) {
+      onError(
+        error?.message ||
+          "Unable to send password reset instructions."
+      );
+    } finally {
+      setLoading(false);
     }
-
-    onError(
-      "Password reset instructions have been sent to your email."
-    );
   }
 
   return (
@@ -1818,6 +1908,7 @@ function AuthModal({
           className="modal-close"
           onClick={onClose}
           aria-label="Close"
+          type="button"
         >
           ×
         </button>
@@ -1851,12 +1942,11 @@ function AuthModal({
                 <input
                   value={fullName}
                   onChange={(event) =>
-                    setFullName(
-                      event.target.value
-                    )
+                    setFullName(event.target.value)
                   }
                   placeholder="Your full name"
                   required
+                  autoComplete="name"
                 />
               </label>
 
@@ -1865,11 +1955,10 @@ function AuthModal({
                 <input
                   value={phone}
                   onChange={(event) =>
-                    setPhone(
-                      event.target.value
-                    )
+                    setPhone(event.target.value)
                   }
                   placeholder="080..."
+                  autoComplete="tel"
                 />
               </label>
             </>
@@ -1881,12 +1970,11 @@ function AuthModal({
               type="email"
               value={email}
               onChange={(event) =>
-                setEmail(
-                  event.target.value
-                )
+                setEmail(event.target.value)
               }
               placeholder="you@example.com"
               required
+              autoComplete="email"
             />
           </label>
 
@@ -1896,13 +1984,16 @@ function AuthModal({
               type="password"
               value={password}
               onChange={(event) =>
-                setPassword(
-                  event.target.value
-                )
+                setPassword(event.target.value)
               }
               placeholder="At least 6 characters"
               minLength="6"
               required
+              autoComplete={
+                isSignup
+                  ? "new-password"
+                  : "current-password"
+              }
             />
           </label>
 
@@ -1924,6 +2015,7 @@ function AuthModal({
             className="text-button"
             onClick={handleForgotPassword}
             disabled={loading}
+            type="button"
           >
             Forgot password?
           </button>
@@ -1934,7 +2026,10 @@ function AuthModal({
             ? "Already have an account?"
             : "Don't have an account?"}
 
-          <button onClick={onSwitch}>
+          <button
+            onClick={onSwitch}
+            type="button"
+          >
             {isSignup
               ? " Log in"
               : " Create one"}
@@ -1962,6 +2057,8 @@ function RequestModal({
 
   async function handleSubmit(event) {
     event.preventDefault();
+
+    if (loading) return;
 
     if (!title.trim()) {
       onError("Please enter what you need.");
@@ -2034,6 +2131,7 @@ function RequestModal({
           className="modal-close"
           onClick={onClose}
           aria-label="Close"
+          type="button"
         >
           ×
         </button>
@@ -2042,7 +2140,9 @@ function RequestModal({
           POST WHAT I NEED
         </span>
 
-        <h2>Tell the BayLINK network what you need.</h2>
+        <h2>
+          Tell the BayLINK network what you need.
+        </h2>
 
         <p>
           Businesses and professionals can discover your request
